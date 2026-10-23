@@ -1,11 +1,3 @@
-"""
-title: Native OpenSky ADS-B Telemetry, Live Map & Benchmarking Tool
-author: Aviation Edge AI Team
-version: 4.1.0
-description: Dynamically queries live ADS-B state vectors from OpenSky Network, performs spatial Haversine calculations, embeds an interactive Leaflet JS dark-mode map, captures latency benchmarks, and routes queries across local Ollama models.
-requirements: requests, pydantic, langchain-ollama
-"""
-
 import math
 import time
 import requests
@@ -41,11 +33,7 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
-    # -------------------------------------------------------------------------
-    # Helper Spatial Calculation & Map Generation Methods
-    # -------------------------------------------------------------------------
     def _haversine(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculates spherical distance between two coordinate pairs in kilometers."""
         R = 6371.0
         dlat = math.radians(lat2 - lat1)
         dlon = math.radians(lon2 - lon1)
@@ -60,7 +48,6 @@ class Tools:
     def _get_bounding_box(
         self, lat: float, lon: float, radius_km: float
     ) -> Dict[str, float]:
-        """Calculates min/max lat/lon bounding parameters to preserve OpenSky API credit quotas."""
         lat_change = radius_km / 111.0
         lon_change = radius_km / (111.0 * math.cos(math.radians(lat)))
         return {
@@ -73,7 +60,6 @@ class Tools:
     def _generate_leaflet_html(
         self, lat: float, lon: float, aircraft_records: List[Dict]
     ) -> str:
-        """Generates an embedded Leaflet.js interactive dark-mode map block without markdown backticks."""
         markers_js = []
         for ac in aircraft_records:
             color = "#ef4444" if ac["emergency"] else "#0284c7"
@@ -104,17 +90,12 @@ class Tools:
         attribution: 'OpenSky | OpenStreetMap'
     }}).addTo(map);
 
-    // Reference center airport marker
     L.marker([{lat}, {lon}]).bindPopup("<b>Center Reference Point</b>").addTo(map);
 
-    // Aircraft circle markers
     {markers_code}
 </script>
 """
 
-    # -------------------------------------------------------------------------
-    # OpenWebUI Dynamic Native Tool Endpoint
-    # -------------------------------------------------------------------------
     def query_live_airspace(
         self,
         center_lat: Optional[float] = Field(
@@ -137,20 +118,12 @@ class Tools:
             description="Optional flight callsign or 24-bit ICAO hex to filter (e.g., 'AIC102', '43EA2B').",
         ),
     ) -> str:
-        """
-        Dynamically fetches live OpenSky ADS-B telemetry, filters state vectors within an optimized bounding box,
-        performs deterministic squawk triage, renders an interactive Leaflet JS map, captures system benchmarks,
-        and routes queries across local Ollama models.
-        """
-        # --- BENCHMARK TIMER START ---
         t_start_total = time.perf_counter()
 
-        # 1. Coordinate & Bounds Resolution
         lat = center_lat if center_lat is not None else self.valves.DEFAULT_LATITUDE
         lon = center_lon if center_lon is not None else self.valves.DEFAULT_LONGITUDE
         radius = radius_km if radius_km is not None else self.valves.DEFAULT_RADIUS_KM
 
-        # 2. OpenSky REST API Retrieval with Explicit User-Agent Header
         t_start_ingest = time.perf_counter()
         bbox = self._get_bounding_box(lat, lon, radius)
         url = f"https://opensky-network.org/api/states/all?lamin={bbox['lamin']:.4f}&lamax={bbox['lamax']:.4f}&lomin={bbox['lomin']:.4f}&lomax={bbox['lomax']:.4f}"
@@ -175,7 +148,6 @@ class Tools:
         if not states:
             return f"No active aircraft state vectors detected within {radius} km of target coordinates ({lat:.4f}, {lon:.4f}). Ingest Latency: {t_ingest_ms} ms."
 
-        # 3. Telemetry Normalization & In-Memory Spatial RAG
         t_start_rag = time.perf_counter()
         aircraft_records = []
         emergency_events = []
@@ -249,12 +221,10 @@ class Tools:
 
         aircraft_records.sort(key=lambda x: x["dist_km"])
 
-        # 4. Intent Routing & Dynamic Ollama Model Inference
         inquiry_type = (target_inquiry or "summary").lower().strip()
         model_used = ""
         t_start_inference = time.perf_counter()
 
-        # ROUTE A: Anomaly Reasoning & Trajectory Analysis -> DeepSeek-R1
         if "anomaly" in inquiry_type or emergency_events:
             model_used = "deepseek-r1"
             reasoner_llm = OllamaLLM(
@@ -269,7 +239,6 @@ Emergency Alerts Active: {emergency_events}
 Provide a concise, step-by-step reasoning analysis evaluating potential airspace anomalies."""
             result_body = reasoner_llm.invoke(prompt)
 
-        # ROUTE B: Tool Execution, Math & Structured Logic -> Qwen2.5-Coder:3b
         elif "code" in inquiry_type or "math" in inquiry_type:
             model_used = "qwen2.5-coder:3b"
             coder_llm = OllamaLLM(
@@ -280,7 +249,6 @@ Flight Vectors: {aircraft_records[:10]}
 Identify the closest aircraft, calculate average altitude, and format the output cleanly."""
             result_body = coder_llm.invoke(prompt)
 
-        # ROUTE C: Low-Latency Positional Lookups -> LLaMA 3.2
         elif "position" in inquiry_type or "lookup" in inquiry_type:
             model_used = "llama3.2"
             llama_llm = OllamaLLM(
@@ -292,7 +260,6 @@ Identify the closest aircraft, calculate average altitude, and format the output
             )
             result_body = llama_llm.invoke(prompt)
 
-        # ROUTE D: Standard Airspace Summarization -> Direct Markdown Table Output
         else:
             model_used = "qwen2.5 (Direct Context)"
             lines = [
@@ -317,7 +284,6 @@ Identify the closest aircraft, calculate average altitude, and format the output
         t_inference_ms = round((time.perf_counter() - t_start_inference) * 1000, 2)
         t_total_ms = round((time.perf_counter() - t_start_total) * 1000, 2)
 
-        # 5. Interactive Map & Benchmarking Output Assembly
         map_html = self._generate_leaflet_html(lat, lon, aircraft_records[:15])
 
         final_output = (
